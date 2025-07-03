@@ -1,0 +1,8 @@
+loguru
+seaborn
+pandas
+numpy
+mlflow
+boto3
+pymysql
+cryptography

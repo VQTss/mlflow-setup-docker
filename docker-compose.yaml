@@ -1,0 +1,91 @@
+services:
+  mlflow:
+    build:
+      context: mlflow_server
+      dockerfile: Dockerfile
+    image: mlflow
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+    command: mlflow server --backend-store-uri 'mysql+pymysql://mlflow_user:${MYSQL_PASSWORD}@mysql_mlflow/mlflow_db' --default-artifact-root 's3://flow-bucket/' --host 0.0.0.0 --port 5001
+    depends_on:
+      - mysql_mlflow
+      - minio
+      - waitfordb
+    ports:
+      - "5001:5001"
+    volumes:
+      - ${HOME}/mlruns:/mlflow
+    networks:
+      - mlflow_network
+    restart: always
+
+  mysql_mlflow:
+    image: mysql:latest
+    container_name: mysql_mlflow
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - ${MYSQL_DATA_PATH}:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - mlflow_network
+
+  waitfordb:
+    image: busybox
+    depends_on:
+      - mysql_mlflow
+    command: sh -c "until nc -z mysql_mlflow 3306; do echo waiting for database; sleep 2; done;"
+    networks:
+      - mlflow_network
+
+  # Adminer (MySQL GUI)
+  adminer:
+    image: adminer
+    container_name: adminer_mysql
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql_mlflow
+    networks:
+      - mlflow_network
+
+
+  minio:
+    image: quay.io/minio/minio
+    container_name: minio1
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: always
+    user: "${UID}:${GID}"
+    volumes:
+      - ${HOME}/minio/data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    networks:
+      - mlflow_network
+
+  minio_mc:
+    image: minio/mc
+    depends_on:
+      - minio
+    volumes:
+      - ./setup_minio.sh:/setup_minio.sh  # Mount setup script
+    entrypoint: /bin/sh -c "/setup_minio.sh"
+    networks:
+      - mlflow_network
+
+networks:
+  mlflow_network:
+    driver: bridge
